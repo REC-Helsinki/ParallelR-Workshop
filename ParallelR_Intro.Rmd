@@ -1,0 +1,516 @@
+---
+title: "Intro to Parallel Computing in R"
+author: "Malcolm Itter"
+date: "10/25/2018"
+output: html_document
+bibliography: ParallelRefs.bib
+---
+
+```{r setup, echo=T, warning=FALSE, message=FALSE}
+# Load libraries
+library(parallel)
+library(snow)
+setDefaultClusterOptions(type="SOCK")
+library(snowfall)
+library(tictoc)
+library(rbenchmark)
+library(coda)
+```
+
+All the materials for the R parallel computing workshop are available on github (INSERT URL). The files can be downloaded via git clone (or by following the URL and downloading the repository directly). If you are on a Linux/Unix machine, you can run the following command in the terminal window:
+
+```{r, clone, eval=FALSE}
+git clone https://github.com/REC-Helsinki
+```
+
+After downloading the workshop directory, you can compile the .Rmd file to produce an .html or you may run the R code within the .Rmd file interactively with the workshop---this is my suggestion.
+
+## Fundamentals
+Let's review some basic concepts that will be useful as we proceed to more complex parallel tasks. Specifically, we will look at "vectorized" versus non-vectorized operations, the family of `apply` functions, and how to benchmark tasks in R.
+
+### For loops vs. vectorized operations
+An operation is vectorized when it acts on an entire vector of values simultaneously, rather than each component in sequence. Let's simulate flipping a coin a million times to demonstrate the difference in the amount of time it takes to complete the operation. We will use the `tictoc` functions to keep track of the time.
+
+```{r, echo=T}
+#### Coin flip ####
+
+# Number of flips
+n = 1E06
+
+# For loop - no preallocation of memory
+tic("for_loop") # Sets the timer
+set.seed(1) # sets the seed for the RNG (so results are consistent)
+val1 = vector()
+for (i in 1:n){
+  val1[i] = ifelse(runif(1)>0.5,1,0)
+}
+toc() # Stops the timer
+
+# For loop - preallocate memory
+tic("for_loop-preallocate")
+set.seed(1)
+val1 = rep(NA,n) # Here we preallocate memory for a vector of size n
+for (i in 1:n){
+  val1[i] = ifelse(runif(1)>0.5,1,0)
+}
+toc()
+
+# Vectorized operation
+tic("vectorized")
+set.seed(1)
+val2 = ifelse(runif(n)>0.5,1,0)
+toc()
+
+all(val1==val2) # check the results (thanks set.seed)
+```
+
+## `apply` functions
+The `apply` family of functions (e.g., `apply`, `tapply`, `sapply`, `lapply`, etc.) provide an efficient approach to coding operations occurring over a set of inputs. These functions all run for loops written in R on the backend, so they are *not always faster*. Despite this, these functions are still good to use when you cannot vectorize your operation. They allow you to specify complex operations concisely, they are as fast or faster than a for loop, and importantly there are parallel versions of many of these functions (as we will see later). The structure of the `apply` family of functions (passing in a set of inputs and a function to evaluate over the set) mimics what occurs in any parallel operation. Let's demonstrate these functions by calculating the row means of a large matrix.
+
+```{r, echo=T}
+#### Row means ####
+
+## Form matrix
+n = 1E05
+p = 5
+X = matrix(sample.int(100,n*p,replace=T),n,p)
+
+# For loop
+tic("for_loop")
+d1 = rep(NA,n)
+for (i in 1:n){
+  d1[i] = mean(X[i,])
+}
+toc()
+
+# Apply
+tic("apply")
+d2 = apply(X,1,mean)
+toc()
+
+# Rowmeans function (for loop in C)
+tic("rowmeans")
+d3 = rowMeans(X)
+toc()
+
+# Vectorized
+tic("vectorized")
+d4 = X%*%rep(1/p,p)
+toc()
+
+```
+
+#### Use `benchmark` function
+The `benchmark` function allows us to compare the amount of time it takes to complete a task using alternative approaches. The time it takes to complete a task in R can vary, so benchmark runs each process for a user-specified number of replicates and ranks the processes from longest to shortest. Let's compare calculating row means using C versus a vectorized operation in R. 
+
+```{r, echo=T}
+#### rowMeans() vs. vectorized row means #### 
+
+n.reps = 1000
+one = rep(1/p,p) # Let's make it a fair fight
+
+benchmark("rowMeans"={d3=rowMeans(X)},
+          "vectorized"={d4=X%*%one},
+          replications=n.reps,
+columns = c("test", "replications", "elapsed",
+            "relative", "user.self", "sys.self"))
+```
+
+#### Data processing example
+We can also use the `apply` family of functions to help us process our data efficiently. In the following example, `tapply` greatly improves the time it takes to process a numeric variable based on the values of an index stored as a categorical variable within a common data.frame.
+
+```{r,echo=T}
+#### Process data using apply ####
+
+# Load example data
+tree.growth = read.csv("TreeWest.csv")
+head(tree.growth)
+
+tic("for_loop")
+tree.idx = unique(tree.growth$Tree)
+age1 = rep(NA,nrow(tree.growth))
+for (i in 1:length(tree.idx)){
+  tree.rows = which(tree.growth$Tree==tree.idx[i])
+  tree.yrs = tree.growth$Year[tree.rows]
+  age1[tree.rows] = tree.yrs - min(tree.yrs) + 1
+}
+toc()
+
+tic("apply")
+age2 = tree.growth$Year -
+  rep(tapply(tree.growth$Year,tree.growth$Tree,min),
+      tapply(tree.growth$Tree,tree.growth$Tree,length)) + 1
+toc()
+
+all(age1==age2) # check results
+
+```
+
+## Parallel `apply`
+One reason the `apply` functions are nice is that in addition to allowing complex operations to be expressed succintly, many parallel versions of these functions exist. This will be the basis for the parallel operations we present later on. First, let's see an example using a simple linear regression model. Specifically, let's fit a regression model that estimates mean annual tree growth as a function of tree age for each tree in our tree growth dataset.
+$$y_{i,t} = \beta_{i,0} + \beta_{i,1}\text{age}_{i,t} + \epsilon_{i,t}$$
+
+```{r,echo=T}
+#### SLR example ####
+
+tic("for_loop")
+mod1 = list()
+for (i in 1:length(tree.idx)){
+  mod1[[i]] = lm(inc~age,data=tree.growth[tree.growth$Tree==tree.idx[i],])
+}
+toc()
+
+tic("lapply")
+mod2 = lapply(tree.idx,function(x){
+  lm(inc~age,data=tree.growth[tree.growth$Tree==x,])
+})
+toc()
+
+```
+The for loop and the `lapply` calls take nearly the same time to run. This is not surprising as they are nearly identical and both rely on for loops written in R. But, we can parallelize the `lapply` call and fit the model using multiple cores. Here, we will use the `parLapply` function from the `snow` library.
+
+```{r,echo=T}
+
+# Determine your number of cores
+my.cores = detectCores() - 1
+
+# Initialize a cluster
+cl = makeCluster(my.cores)
+
+# Move the tree growth dataset to each node
+clusterExport(cl,"tree.growth")
+
+# Run lapply in parallel
+tic("parallel-apply")
+mod3 = parLapply(cl,tree.idx,function(x){
+  lm(inc~age,data=tree.growth[tree.growth$Tree==x,])
+})
+toc()
+
+stopCluster(cl)
+
+```
+
+## Applied analysis: Modeling willow tit occurrence
+Let's bring what we have learned so far together to conduct an applied analysis. We will model willow tit occupancy in the Swiss Alps using a dataset described in @Royle2008. We will use the willow tit data to demonstrate the model selection techniques presented in @Hooten2015 utilizing parallel operations to speed up computationally intensive processes including bootstrapping, Markov chain Monte Carlo (MCMC), and cross-validation.
+
+#### Willow tit data
+
+```{r,echo=T}
+wt = read.csv("http://esapubs.org/archive/mono/M085/001/wt.csv",header=T)
+head(wt)
+```
+We have observations of willow tit occurrence (0=absent, 1=present) from a set of $n$ sites. Each site was visited 1-3 times. Along with the occurrence data, we have observations of elevation and forest cover to use as covariates. 
+
+#### GLM
+Let's fit a naive GLM for starters,
+
+$$ \begin{align}
+y_{i} &= \sum_{j=1}^{J_{i}}y_{ij}\\[4pt]
+y_{i} &\sim \text{Binomial}(J_{i},\pi_{i})\\[4pt]
+\text{logit}(\pi_{i}) &= \beta_{0} + \beta_{1}\text{elev}_{i}
+\end{align} $$
+where $i, i=1,\ldots,n$ indexes site, $j, j=1,\ldots,J_{i}$ indexes visit up to a total number of visits $J_{i}$, and $\pi_{i}$ is the probability of occurrence at site $i$.
+
+```{r,echo=T}
+#### Willow tit: Naive GLM ####
+
+n = 200
+wt = wt[1:n,] # limit observations to the first 200 rows
+resp = c("y.1","y.2","y.3") # define response columns
+wt$visits = apply(wt[,resp],1,function(x)sum(!is.na(x))) # calculate the number of site visits
+wt$detect = apply(wt[,resp],1,function(x)sum(x,na.rm=T)) # calculate the number of visits during which the willow tit was detected
+wt$prop = wt$detect/wt$visits # calculate the proportion of visits during which the willow tit was detected
+elev.std = scale(wt$elev); a.elev=attr(elev.std,"scaled:center"); b.elev=attr(elev.std,"scaled:scale")
+wt$elev.std = as.numeric(elev.std) # center and scale the elevation variable
+
+# Fit GLM model
+mod = glm(prop~elev.std,data=wt,family=binomial,weights=visits)
+summary(mod)
+
+# Plot fitted probability values as function of elevation
+n.step = 50
+elev.df = data.frame(elev.std=seq(min(wt$elev.std),max(wt$elev.std),length=n.step))
+elev.df$elev = a.elev+b.elev*elev.df$elev.std
+elev.df$pred.mean = predict(mod,newdata=elev.df,type="response")
+plot(wt$elev,wt$prop,xlab="Elevation (m)",ylab="Pr(Occurrence)",axes=F); axis(1); axis(2)
+lines(elev.df$elev,elev.df$pred.mean,lwd=3)
+```
+
+#### Parallel bootstrap
+Confidence intervals for GLMs can be difficult to construct (although an analytical solution exists for binomial data with a logit link), so let's use a non-parametric bootstrap to generate simulated confidence intervals for our estimated mean probabilities. We will compare the time it takes to run our bootstrap in sequence versus in parallel.
+
+```{r,echo=T}
+#### Willow tit: Bootstrap confidence interval ####
+
+# Let's not use predict function -- it's slow!
+X = cbind(rep(1,n.step),elev.df$elev.std) # construct design matrix
+inv.logit = function(x){
+  1/(1+exp(-x))
+} # inverse logit function to backtransform fitted values
+
+# Set bootstrap parameters
+n.sim = 10000
+seed = 1
+samps = matrix(sample(1:n,n*n.sim,replace=T),n.sim,n,byrow=T)
+
+# For loop
+tic("sequential-bootstrap")
+set.seed(seed)
+pred.vals = array(NA,dim=c(n.sim,n.step))
+# bar = txtProgressBar(min=1,max=(n.sim+1),initial=0,style=3,char="*",width=50,title=m)
+for (i in 1:n.sim){
+  sim.coef = coefficients(glm(prop~elev.std,data=wt[samps[i,],],family=binomial,weights=visits))
+  pred.vals[i,] = inv.logit(X%*%sim.coef)
+  # setTxtProgressBar(bar,i)
+}
+elev.df[,c("lwr","upr")] = t(apply(pred.vals,2,function(x)quantile(x,c(0.025,0.975))))
+toc()
+
+# In parallel - use snow::clusterApplyLB
+tic("parallel-bootstrap")
+set.seed(seed)
+# Define bootstrap function
+boot.ci = function(i){
+  sim.coef = coefficients(glm(prop~elev.std,data=wt[samps[i,],],family=binomial,weights=visits))
+  return(as.numeric(inv.logit(X%*%sim.coef)))
+}
+cl = makeCluster(my.cores)
+clusterExport(cl,list("X","wt","samps","inv.logit")) # pass necessary inputs to all nodes
+par.pred.vals = do.call("rbind",clusterApplyLB(cl,1:n.sim,boot.ci)) # run parallel bootstrap
+stopCluster(cl)
+elev.df[,c("lwr2","upr2")] = t(apply(par.pred.vals,2,function(x)quantile(x,c(0.025,0.975))))
+toc()
+
+# Add confidence interval to plot
+plot(wt$elev,wt$prop,xlab="Elevation (m)",ylab="Pr(Occurrence)",axes=F); axis(1); axis(2)
+lines(elev.df$elev,elev.df$pred.mean,lwd=3)
+lines(elev.df$elev,elev.df$lwr2,lty="dashed",lwd=1.6)
+lines(elev.df$elev,elev.df$upr2,lty="dashed",lwd=1.6)
+
+```
+
+#### Bayesian hierarchical model
+In our naive GLM we confounded detection probability and the probability of occurrence. As described in @Dorazio2012, our observations ($y_{i}$) are actually the product of the detection probability $p$ and a latent, Bernoulli random variable ($z_{i}$), indicating whether the willow tit is present or absent at site $i$,
+
+$$\begin{align}
+z_{i}&\lvert{\pi_{i}} \sim \text{Bernoulli}(\pi_{i})\\[4pt]
+y_{i}&\lvert{z_{i}},p \sim \text{Binomial}(J_{i},z_{i}p)
+\end{align}$$
+where $\pi_{i}$ may vary depending on visit, and $p$ may vary across sites and visits. We can separate the detection probability ($p$) from the probability of occurrence ($\pi_{i}$) by using a Bayesian hierarchical model. Here we assume a homogeneous detection probabilty and use a probit link function to estimate the mean probability of occurrence [see @Dorazio2012;@Hooten2015]. As defined in @Hooten2015,
+
+$$\begin{align}
+y_{i} &\sim \left\{\begin{array}{ll}
+0 & \text{if}\;z_{i}=0\\
+\text{Binomial}(J_{i},p) & \text{if}\;z_{i}=1
+\end{array}\right.\\[8pt]
+z_{i} &\sim \left\{\begin{array}{ll}
+0 & \text{if}\; v_{i} \leq 0\\
+1 & \text{if}\; v_{i} > 0
+\end{array}\right.\\[8pt]
+v_{i} &\sim \text{N}(\beta_{0}+\beta_{1}\text{elev}_{i},1)\\[8pt]
+p &\sim \text{Beta}(1,1)\\[8pt]
+\beta_{0} &\sim \text{N}(\mu_{0},\sigma_{0}^{2})\\[8pt]
+\beta_{1} &\sim \text{N}(\mu,\sigma_{\beta}^{2}).
+\end{align}$$
+
+Let's use MCMC to fit this model (MCMC code modified slightly from @Hooten2015).
+
+```{r,echo=T,eval=F}
+#### Willow tit: Bayesian hierarchical site-occupancy model ####
+
+source("OccModMCMC.R")
+
+n.mcmc = 50000
+out = OccModMCMC(Y=wt[,resp],J=wt$visits,X=wt$elev.std,y.oos=1,J.oos=1,X.oos=1,n.mcmc=n.mcmc,no.pred=T)
+
+plot(mcmc(out$beta.0.save))
+plot(mcmc(out$beta.save))
+plot(mcmc(out$p.save))
+
+```
+Ideally, we would run multiple chains using different starting values and initialization seeds to assess model convergence. This can easily be done in parallel using the tools we have seen already in this workshop.
+
+```{r,echo=T,eval=F}
+#### Willow tit: Multiple MCMC chains in parallel - Use snowfall::sfClusterApply ####
+
+# Define function to run/process mcmc
+run.occ.mod = function(i){
+  out = OccModMCMC(Y=wt[,resp],J=wt$visits,X=wt$elev.std,y.oos=1,J.oos=1,X.oos=1,n.mcmc=n.mcmc,no.pred=T)
+  post.samp.idx = seq(1,length(out$beta.0.save),thin)
+  n.post = length(post.samp.idx)
+  beta.0.post = out$beta.0.save[post.samp.idx]
+  beta.post = out$beta.save[post.samp.idx]
+  p.post = out$p.save[post.samp.idx]
+  psi.post = mcmc(t(sapply(1:n.post,function(j,b0=beta.0.post,b=beta.post,x=elev.df$elev.std){
+    pnorm(b0[j]+b[j]*x)
+  })))
+  return(list(beta.0=mcmc(beta.0.post),beta=mcmc(beta.post),
+              p=mcmc(p.post),psi=psi.post))
+}
+
+# Setup parallel run
+n.chains = 3
+thin = 15
+sfInit(parallel=T,cpus=n.chains,slaveOutfile="~/Documents/ParallelR/MotivatingExample/track-mcmc.txt")
+sfLibrary(coda) # load coda library on each node
+sfExport("wt","resp","n.mcmc","thin","elev.df","OccModMCMC")
+sfClusterSetupRNG() # set random seed---this ensures each node starts at a different random seed
+mcmc.out = sfClusterApply(1:n.chains,run.occ.mod)
+sfStop()
+
+# Take a look at the structure of the results
+str(mcmc.out)
+
+# Assess convergence
+beta.0.post = mcmc.list(lapply(mcmc.out,function(x)x$beta.0))
+beta.post = mcmc.list(lapply(mcmc.out,function(x)x$beta))
+p.post = mcmc.list(lapply(mcmc.out,function(x)x$p))
+psi.post = mcmc.list(lapply(mcmc.out,function(x)x$psi))
+
+plot(beta.0.post)
+plot(beta.post)
+plot(p.post)
+quartz()
+plot(psi.post,ask=T)
+
+```
+
+```{r,echo=F,warning=F,message=F,results='hide'}
+
+source("OccModMCMC.R")
+
+n.mcmc = 50000
+
+# Define function to run/process mcmc
+run.occ.mod = function(i){
+  out = OccModMCMC(Y=wt[,resp],J=wt$visits,X=wt$elev.std,y.oos=1,J.oos=1,X.oos=1,n.mcmc=n.mcmc,no.pred=T)
+  post.samp.idx = seq(1,length(out$beta.0.save),thin)
+  n.post = length(post.samp.idx)
+  beta.0.post = out$beta.0.save[post.samp.idx]
+  beta.post = out$beta.save[post.samp.idx]
+  p.post = out$p.save[post.samp.idx]
+  psi.post = mcmc(t(sapply(1:n.post,function(j,b0=beta.0.post,b=beta.post,x=elev.df$elev.std){
+    pnorm(b0[j]+b[j]*x)
+  })))
+  return(list(beta.0=mcmc(beta.0.post),beta=mcmc(beta.post),
+              p=mcmc(p.post),psi=psi.post))
+}
+
+# Setup parallel run
+n.chains = 3
+thin = 15
+sfInit(parallel=T,cpus=n.chains,slaveOutfile="~/Documents/ParallelR/MotivatingExample/track-mcmc.txt")
+sfLibrary(coda)
+sfExport("wt","resp","n.mcmc","thin","elev.df","OccModMCMC")
+sfClusterSetupRNG()
+mcmc.out = sfClusterApply(1:n.chains,run.occ.mod)
+sfStop()
+
+psi.post = mcmc.list(lapply(mcmc.out,function(x)x$psi))
+```
+Let's compare the results of the Bayesian site-occupancy model to our naive GLM.
+
+```{r,echo=T}
+#### Willow tit: GLM vs. Bayesian site-occupancy model ####
+
+# Summarize the posterior distribution for probability of occurrence
+elev.df[,c("post.mean","lwr.ci","upr.ci")] =
+  t(apply(as.matrix(psi.post),2,function(x)c(mean(x),quantile(x,c(0.025,0.975)))))
+
+# Plot fitted Pr(Occurrence) vs. elevation for GLM and Bayesian model
+par(mar=c(5,4,4,4)+0.1,xpd=T)
+plot(wt$elev,wt$prop,xlab="Elevation (m)",ylab="Pr(Occurrence)",axes=F)
+axis(1); axis(2)
+lines(elev.df$elev,elev.df$pred.mean,lwd=3)
+lines(elev.df$elev,elev.df$lwr2,lty="dashed",lwd=1.6)
+lines(elev.df$elev,elev.df$upr2,lty="dashed",lwd=1.6)
+lines(elev.df$elev,elev.df$post.mean,col="blue",lwd=3)
+lines(elev.df$elev,elev.df$lwr.ci,col="blue",lwd=1.6,lty="dashed")
+lines(elev.df$elev,elev.df$upr.ci,col="blue",lwd=1.6,lty="dashed")
+legend(2100,0.4,inset=c(-0.3,0),legend=c("GLM - Mean","Bootstrapped CI","Post. Mean","Cred. Int."),
+       lty=c("solid","dashed","solid","dashed"),col=c("black","black","blue","blue"),
+       lwd=c(3,1.6,3,1.6),bty="n")
+```
+
+#### Cross-validation
+The gold standard for predictive model selection (i.e., when the goal is prediction, not inference about model parameters) is to compare the performance of competing models applied to a holdout dataset using a local and proper scoring rule [@Hooten2015]. That is, to use proper out-of-sample validation. Often in ecology, we do not have sufficient replication in our datasets to form separate fit and holdout sets. Cross-validation, in which $K$ subsets of the data are held out sequentially and used to assess model performance, is a powerful tool in such situations as it represents a compromise between out-of-sample prediction and in-sample fit.
+
+The downside of cross-validation is it is computationally expensive---we need to fit our model and predict to a holdout set $K$ times! The good news is, we can use the tools from this workshop to parallelize the cross-validation procedure, thereby greatly improving its speed and making it a tractable option for model selection. Let's demonstrate parallel cross-validation using the Bayesian site-occupancy model applied to the willow tit data. We will compare four models:
+
+$$\begin{align}
+\text{M1}&: \text{E}[v_{i}\lvert\boldsymbol{\beta}] = \beta_{0}\\[4pt]
+\text{M2}&: \text{E}[v_{i}\lvert\boldsymbol{\beta}] = \beta_{0} + \beta_{1}\text{elev}_{i}\\[4pt]
+\text{M3}&: \text{E}[v_{i}\lvert\boldsymbol{\beta}] = \beta_{0} + \beta_{1}\text{forest}_{i}\\[4pt]
+\text{M4}&: \text{E}[v_{i}\lvert\boldsymbol{\beta}] = \beta_{0} + \beta_{1}\text{elev}_{i} + \beta_{2}\text{forest}_{i}\\[4pt]
+\end{align}$$
+using 10-fold cross-validation. We will use the log-predictive density (LPD; a local and proper scoring rule), which measures the probability of observing hold out data conditional on the model integrating over the uncertainty in model parameters,
+
+$$\text{log}[\mathbf{y}_{\text{oos}}\lvert\mathbf{y}] = \text{log}\int[\mathbf{y}_{\text{oos}}\lvert\mathbf{y},\boldsymbol{\theta}][\boldsymbol{\theta}\lvert\mathbf{y}]d\boldsymbol{\theta}$$
+where "oos" indicates out-of-sample observations and $\boldsymbol{\theta}$ is the set of all model parameters. More details can be found in @Hooten2015.
+
+```{r,echo=T,warning=F,message=F}
+#### Willow tit: Cross-validation ####
+
+# Add columns to wt data.frame for centered/scaled forest cover and intercept
+wt$for.std = as.numeric(scale(wt$forest))
+wt$intercept = 1
+
+# Cross-validation parameters
+K=10
+fold.idx.mat=matrix(1:n,,K)
+fold.idx.mat
+
+# Define function to fit each candidate model and calculate the LPD for each fold
+cv.fcn <- function(k){
+  score.vec=rep(0,4)
+  fold.idx=fold.idx.mat[,k]
+  y.oos=apply(wt[fold.idx,resp],1,sum,na.rm=T)
+  cat("\n","CV-Set:",k,"|","Model: 1/4","\n")
+  tmp.out.1=OccModMCMC(Y=wt[-fold.idx,resp],J=wt[-fold.idx,"visits"],X=wt[-fold.idx,"intercept"],
+                       y.oos=y.oos,J.oos=wt[fold.idx,"visits"],X.oos=wt[fold.idx,"intercept"],
+                       n.mcmc=n.mcmc,null.model=T)    
+  score.vec[1]=tmp.out.1$score
+  cat("\n","CV-Set:",k,"|","Model 2/4","\n")
+  tmp.out.2=OccModMCMC(Y=wt[-fold.idx,resp],J=wt[-fold.idx,"visits"],X=wt[-fold.idx,"elev.std"],
+                       y.oos=y.oos,J.oos=wt[fold.idx,"visits"],X.oos=wt[fold.idx,"elev.std"],
+                       n.mcmc=n.mcmc)    
+  score.vec[2]=tmp.out.2$score
+  cat("\n","CV-Set:",k,"|","Model 3/4","\n")
+  tmp.out.3=OccModMCMC(Y=wt[-fold.idx,resp],J=wt[-fold.idx,"visits"],X=wt[-fold.idx,"for.std"],
+                       y.oos=y.oos,J.oos=wt[fold.idx,"visits"],X.oos=wt[fold.idx,"for.std"],
+                       n.mcmc=n.mcmc)    
+  score.vec[3]=tmp.out.3$score
+  cat("\n","CV-Set:",k,"|","Model 4/4","\n")
+  tmp.out.4=OccModMCMC(Y=wt[-fold.idx,resp],J=wt[-fold.idx,"visits"],
+                       X=wt[-fold.idx,c("elev.std","for.std")],
+                       y.oos=y.oos,J.oos=wt[fold.idx,"visits"],
+                       X.oos=wt[fold.idx,c("elev.std","for.std")],
+                       n.mcmc=n.mcmc)    
+  score.vec[4]=tmp.out.4$score
+  score.vec
+}
+
+# Define MCMC parameters
+n.mcmc=50000
+
+# Run CV in parallel
+sfInit(parallel=T,cpus=4,slaveOutfile="~/Documents/ParallelR/MotivatingExample/track-cv.txt")
+sfExport("fold.idx.mat","wt","resp","n.mcmc","OccModMCMC")
+sfClusterSetupRNG()
+cv.score.list = sfClusterApplyLB(1:K,cv.fcn)
+sfStop()
+
+# Check structure of cv.score.list
+str(cv.score.list)
+
+# Calculate log-predictive density score for all models
+lpd.scores = apply(do.call("rbind",cv.score.list),2,sum)
+
+cat("LPD scores",
+    "\n",paste(paste("M",1:4,sep=""),": ",round(lpd.scores,2),"\n",sep=""),
+    "Winning model","=",paste("M",which(lpd.scores==max(lpd.scores)),sep=""))
+
+```
+
+## References
