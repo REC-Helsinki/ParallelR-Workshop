@@ -20,7 +20,7 @@ library(coda)
 All the materials for the R parallel computing workshop are available on github (INSERT URL). The files can be downloaded via git clone (or by following the URL and downloading the repository directly). If you are on a Linux/Unix machine, you can run the following command in the terminal window:
 
 ```{r, clone, eval=FALSE}
-git clone https://github.com/REC-Helsinki
+git clone https://github.com/REC-Helsinki/ParallelR-Workshop
 ```
 
 After downloading the workshop directory, you can compile the .Rmd file to produce an .html or you may run the R code within the .Rmd file interactively with the workshop---this is my suggestion.
