@@ -196,6 +196,8 @@ Let's bring what we have learned so far together to conduct an applied analysis.
 
 #### Willow tit data
 
+Data citation: @HootenSupp
+
 ```{r,echo=T}
 wt = read.csv("http://esapubs.org/archive/mono/M085/001/wt.csv",header=T)
 head(wt)

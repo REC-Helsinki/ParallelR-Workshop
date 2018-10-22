@@ -159,7 +159,7 @@ for (i in 1:n){
   val1[i] = ifelse(runif(1)&gt;0.5,1,0)
 }
 toc() # Stops the timer</code></pre>
-<pre><code>## for_loop: 5.723 sec elapsed</code></pre>
+<pre><code>## for_loop: 4.899 sec elapsed</code></pre>
 <pre class="r"><code># For loop - preallocate memory
 tic(&quot;for_loop-preallocate&quot;)
 set.seed(1)
@@ -168,13 +168,13 @@ for (i in 1:n){
   val1[i] = ifelse(runif(1)&gt;0.5,1,0)
 }
 toc()</code></pre>
-<pre><code>## for_loop-preallocate: 5.603 sec elapsed</code></pre>
+<pre><code>## for_loop-preallocate: 4.727 sec elapsed</code></pre>
 <pre class="r"><code># Vectorized operation
 tic(&quot;vectorized&quot;)
 set.seed(1)
 val2 = ifelse(runif(n)&gt;0.5,1,0)
 toc()</code></pre>
-<pre><code>## vectorized: 0.271 sec elapsed</code></pre>
+<pre><code>## vectorized: 0.215 sec elapsed</code></pre>
 <pre class="r"><code>all(val1==val2) # check the results (thanks set.seed)</code></pre>
 <pre><code>## [1] TRUE</code></pre>
 </div>
@@ -196,22 +196,22 @@ for (i in 1:n){
   d1[i] = mean(X[i,])
 }
 toc()</code></pre>
-<pre><code>## for_loop: 0.624 sec elapsed</code></pre>
+<pre><code>## for_loop: 0.425 sec elapsed</code></pre>
 <pre class="r"><code># Apply
 tic(&quot;apply&quot;)
 d2 = apply(X,1,mean)
 toc()</code></pre>
-<pre><code>## apply: 0.547 sec elapsed</code></pre>
+<pre><code>## apply: 0.524 sec elapsed</code></pre>
 <pre class="r"><code># Rowmeans function (for loop in C)
 tic(&quot;rowmeans&quot;)
 d3 = rowMeans(X)
 toc()</code></pre>
-<pre><code>## rowmeans: 0.01 sec elapsed</code></pre>
+<pre><code>## rowmeans: 0.008 sec elapsed</code></pre>
 <pre class="r"><code># Vectorized
 tic(&quot;vectorized&quot;)
 d4 = X%*%rep(1/p,p)
 toc()</code></pre>
-<pre><code>## vectorized: 0.012 sec elapsed</code></pre>
+<pre><code>## vectorized: 0.005 sec elapsed</code></pre>
 <div id="use-benchmark-function" class="section level4">
 <h4>Use <code>benchmark</code> function</h4>
 <p>The <code>benchmark</code> function allows us to compare the amount of time it takes to complete a task using alternative approaches. The time it takes to complete a task in R can vary, so benchmark runs each process for a user-specified number of replicates and ranks the processes from longest to shortest. Let’s compare calculating row means using C versus a vectorized operation in R.</p>
@@ -226,8 +226,8 @@ benchmark(&quot;rowMeans&quot;={d3=rowMeans(X)},
 columns = c(&quot;test&quot;, &quot;replications&quot;, &quot;elapsed&quot;,
             &quot;relative&quot;, &quot;user.self&quot;, &quot;sys.self&quot;))</code></pre>
 <pre><code>##         test replications elapsed relative user.self sys.self
-## 1   rowMeans         1000   3.903    1.206     3.217    0.598
-## 2 vectorized         1000   3.235    1.000     2.533    0.682</code></pre>
+## 1   rowMeans         1000   3.709    1.137     3.099    0.574
+## 2 vectorized         1000   3.263    1.000     2.539    0.699</code></pre>
 </div>
 <div id="data-processing-example" class="section level4">
 <h4>Data processing example</h4>
@@ -253,7 +253,7 @@ for (i in 1:length(tree.idx)){
   age1[tree.rows] = tree.yrs - min(tree.yrs) + 1
 }
 toc()</code></pre>
-<pre><code>## for_loop: 0.264 sec elapsed</code></pre>
+<pre><code>## for_loop: 0.259 sec elapsed</code></pre>
 <pre class="r"><code>tic(&quot;apply&quot;)
 age2 = tree.growth$Year -
   rep(tapply(tree.growth$Year,tree.growth$Tree,min),
@@ -275,13 +275,13 @@ for (i in 1:length(tree.idx)){
   mod1[[i]] = lm(inc~age,data=tree.growth[tree.growth$Tree==tree.idx[i],])
 }
 toc()</code></pre>
-<pre><code>## for_loop: 1.717 sec elapsed</code></pre>
+<pre><code>## for_loop: 1.61 sec elapsed</code></pre>
 <pre class="r"><code>tic(&quot;lapply&quot;)
 mod2 = lapply(tree.idx,function(x){
   lm(inc~age,data=tree.growth[tree.growth$Tree==x,])
 })
 toc()</code></pre>
-<pre><code>## lapply: 1.497 sec elapsed</code></pre>
+<pre><code>## lapply: 1.765 sec elapsed</code></pre>
 <p>The for loop and the <code>lapply</code> calls take nearly the same time to run. This is not surprising as they are nearly identical and both rely on for loops written in R. But, we can parallelize the <code>lapply</code> call and fit the model using multiple cores. Here, we will use the <code>parLapply</code> function from the <code>snow</code> library.</p>
 <pre class="r"><code># Determine your number of cores
 my.cores = detectCores() - 1
@@ -298,14 +298,15 @@ mod3 = parLapply(cl,tree.idx,function(x){
   lm(inc~age,data=tree.growth[tree.growth$Tree==x,])
 })
 toc()</code></pre>
-<pre><code>## parallel-apply: 0.87 sec elapsed</code></pre>
+<pre><code>## parallel-apply: 0.953 sec elapsed</code></pre>
 <pre class="r"><code>stopCluster(cl)</code></pre>
 </div>
 <div id="applied-analysis-modeling-willow-tit-occurrence" class="section level2">
 <h2>Applied analysis: Modeling willow tit occurrence</h2>
-<p>Let’s bring what we have learned so far together to conduct an applied analysis. We will model willow tit occupancy in the Swiss Alps using a dataset described in <span class="citation">Royle and Dorazio (2008)</span>. We will use the willow tit data to demonstrate the model selection techniques presented in <span class="citation">Hooten and Hobbs (2015)</span> utilizing parallel operations to speed up computationally intensive processes including bootstrapping, Markov chain Monte Carlo (MCMC), and cross-validation.</p>
+<p>Let’s bring what we have learned so far together to conduct an applied analysis. We will model willow tit occupancy in the Swiss Alps using a dataset described in <span class="citation">Royle and Dorazio (2008)</span>. We will use the willow tit data to demonstrate the model selection techniques presented in <span class="citation">Hooten and Hobbs (2015a)</span> utilizing parallel operations to speed up computationally intensive processes including bootstrapping, Markov chain Monte Carlo (MCMC), and cross-validation.</p>
 <div id="willow-tit-data" class="section level4">
 <h4>Willow tit data</h4>
+<p>Data citation: <span class="citation">Hooten and Hobbs (2015b)</span></p>
 <pre class="r"><code>wt = read.csv(&quot;http://esapubs.org/archive/mono/M085/001/wt.csv&quot;,header=T)
 head(wt)</code></pre>
 <pre><code>##   y.1 y.2 y.3 elev forest
@@ -399,7 +400,7 @@ for (i in 1:n.sim){
 }
 elev.df[,c(&quot;lwr&quot;,&quot;upr&quot;)] = t(apply(pred.vals,2,function(x)quantile(x,c(0.025,0.975))))
 toc()</code></pre>
-<pre><code>## sequential-bootstrap: 23.879 sec elapsed</code></pre>
+<pre><code>## sequential-bootstrap: 21.59 sec elapsed</code></pre>
 <pre class="r"><code># In parallel - use snow::clusterApplyLB
 tic(&quot;parallel-bootstrap&quot;)
 set.seed(seed)
@@ -414,7 +415,7 @@ par.pred.vals = do.call(&quot;rbind&quot;,clusterApplyLB(cl,1:n.sim,boot.ci)) # 
 stopCluster(cl)
 elev.df[,c(&quot;lwr2&quot;,&quot;upr2&quot;)] = t(apply(par.pred.vals,2,function(x)quantile(x,c(0.025,0.975))))
 toc()</code></pre>
-<pre><code>## parallel-bootstrap: 19.421 sec elapsed</code></pre>
+<pre><code>## parallel-bootstrap: 23.623 sec elapsed</code></pre>
 <pre class="r"><code># Add confidence interval to plot
 plot(wt$elev,wt$prop,xlab=&quot;Elevation (m)&quot;,ylab=&quot;Pr(Occurrence)&quot;,axes=F); axis(1); axis(2)
 lines(elev.df$elev,elev.df$pred.mean,lwd=3)
@@ -428,7 +429,7 @@ lines(elev.df$elev,elev.df$upr2,lty=&quot;dashed&quot;,lwd=1.6)</code></pre>
 <p><span class="math display">\[\begin{align}
 z_{i}&amp;\lvert{\pi_{i}} \sim \text{Bernoulli}(\pi_{i})\\[4pt]
 y_{i}&amp;\lvert{z_{i}},p \sim \text{Binomial}(J_{i},z_{i}p)
-\end{align}\]</span> where <span class="math inline">\(\pi_{i}\)</span> may vary depending on visit, and <span class="math inline">\(p\)</span> may vary across sites and visits. We can separate the detection probability (<span class="math inline">\(p\)</span>) from the probability of occurrence (<span class="math inline">\(\pi_{i}\)</span>) by using a Bayesian hierarchical model. Here we assume a homogeneous detection probabilty and use a probit link function to estimate the mean probability of occurrence <span class="citation">(see Dorazio and Rodriguez 2012; Hooten and Hobbs 2015)</span>. As defined in <span class="citation">Hooten and Hobbs (2015)</span>,</p>
+\end{align}\]</span> where <span class="math inline">\(\pi_{i}\)</span> may vary depending on visit, and <span class="math inline">\(p\)</span> may vary across sites and visits. We can separate the detection probability (<span class="math inline">\(p\)</span>) from the probability of occurrence (<span class="math inline">\(\pi_{i}\)</span>) by using a Bayesian hierarchical model. Here we assume a homogeneous detection probabilty and use a probit link function to estimate the mean probability of occurrence <span class="citation">(see Dorazio and Rodriguez 2012; Hooten and Hobbs 2015a)</span>. As defined in <span class="citation">Hooten and Hobbs (2015a)</span>,</p>
 <p><span class="math display">\[\begin{align}
 y_{i} &amp;\sim \left\{\begin{array}{ll}
 0 &amp; \text{if}\;z_{i}=0\\
@@ -443,7 +444,7 @@ p &amp;\sim \text{Beta}(1,1)\\[8pt]
 \beta_{0} &amp;\sim \text{N}(\mu_{0},\sigma_{0}^{2})\\[8pt]
 \beta_{1} &amp;\sim \text{N}(\mu,\sigma_{\beta}^{2}).
 \end{align}\]</span></p>
-<p>Let’s use MCMC to fit this model (MCMC code modified slightly from <span class="citation">Hooten and Hobbs (2015)</span>).</p>
+<p>Let’s use MCMC to fit this model (MCMC code modified slightly from <span class="citation">Hooten and Hobbs (2015a)</span>).</p>
 <pre class="r"><code>#### Willow tit: Bayesian hierarchical site-occupancy model ####
 
 source(&quot;OccModMCMC.R&quot;)
@@ -520,7 +521,7 @@ legend(2100,0.4,inset=c(-0.3,0),legend=c(&quot;GLM - Mean&quot;,&quot;Bootstrapp
 </div>
 <div id="cross-validation" class="section level4">
 <h4>Cross-validation</h4>
-<p>The gold standard for predictive model selection (i.e., when the goal is prediction, not inference about model parameters) is to compare the performance of competing models applied to a holdout dataset using a local and proper scoring rule <span class="citation">(Hooten and Hobbs 2015)</span>. That is, to use proper out-of-sample validation. Often in ecology, we do not have sufficient replication in our datasets to form separate fit and holdout sets. Cross-validation, in which <span class="math inline">\(K\)</span> subsets of the data are held out sequentially and used to assess model performance, is a powerful tool in such situations as it represents a compromise between out-of-sample prediction and in-sample fit.</p>
+<p>The gold standard for predictive model selection (i.e., when the goal is prediction, not inference about model parameters) is to compare the performance of competing models applied to a holdout dataset using a local and proper scoring rule <span class="citation">(Hooten and Hobbs 2015a)</span>. That is, to use proper out-of-sample validation. Often in ecology, we do not have sufficient replication in our datasets to form separate fit and holdout sets. Cross-validation, in which <span class="math inline">\(K\)</span> subsets of the data are held out sequentially and used to assess model performance, is a powerful tool in such situations as it represents a compromise between out-of-sample prediction and in-sample fit.</p>
 <p>The downside of cross-validation is it is computationally expensive—we need to fit our model and predict to a holdout set <span class="math inline">\(K\)</span> times! The good news is, we can use the tools from this workshop to parallelize the cross-validation procedure, thereby greatly improving its speed and making it a tractable option for model selection. Let’s demonstrate parallel cross-validation using the Bayesian site-occupancy model applied to the willow tit data. We will compare four models:</p>
 <p><span class="math display">\[\begin{align}
 \text{M1}&amp;: \text{E}[v_{i}\lvert\boldsymbol{\beta}] = \beta_{0}\\[4pt]
@@ -528,7 +529,7 @@ legend(2100,0.4,inset=c(-0.3,0),legend=c(&quot;GLM - Mean&quot;,&quot;Bootstrapp
 \text{M3}&amp;: \text{E}[v_{i}\lvert\boldsymbol{\beta}] = \beta_{0} + \beta_{1}\text{forest}_{i}\\[4pt]
 \text{M4}&amp;: \text{E}[v_{i}\lvert\boldsymbol{\beta}] = \beta_{0} + \beta_{1}\text{elev}_{i} + \beta_{2}\text{forest}_{i}\\[4pt]
 \end{align}\]</span> using 10-fold cross-validation. We will use the log-predictive density (LPD; a local and proper scoring rule), which measures the probability of observing hold out data conditional on the model integrating over the uncertainty in model parameters,</p>
-<p><span class="math display">\[\text{log}[\mathbf{y}_{\text{oos}}\lvert\mathbf{y}] = \text{log}\int[\mathbf{y}_{\text{oos}}\lvert\mathbf{y},\boldsymbol{\theta}][\boldsymbol{\theta}\lvert\mathbf{y}]d\boldsymbol{\theta}\]</span> where “oos” indicates out-of-sample observations and <span class="math inline">\(\boldsymbol{\theta}\)</span> is the set of all model parameters. More details can be found in <span class="citation">Hooten and Hobbs (2015)</span>.</p>
+<p><span class="math display">\[\text{log}[\mathbf{y}_{\text{oos}}\lvert\mathbf{y}] = \text{log}\int[\mathbf{y}_{\text{oos}}\lvert\mathbf{y},\boldsymbol{\theta}][\boldsymbol{\theta}\lvert\mathbf{y}]d\boldsymbol{\theta}\]</span> where “oos” indicates out-of-sample observations and <span class="math inline">\(\boldsymbol{\theta}\)</span> is the set of all model parameters. More details can be found in <span class="citation">Hooten and Hobbs (2015a)</span>.</p>
 <pre class="r"><code>#### Willow tit: Cross-validation ####
 
 # Add columns to wt data.frame for centered/scaled forest cover and intercept
@@ -608,8 +609,8 @@ str(cv.score.list)</code></pre>
 ##  $ : num [1:4] -34.5 -30.7 -31.5 -30
 ##  $ : num [1:4] -34.8 -32 -33.1 -31.6
 ##  $ : num [1:4] -27.8 -23.9 -26.1 -24.6
-##  $ : num [1:4] -27.6 -24 -25.5 -23.5
-##  $ : num [1:4] -35.9 -30.7 -33 -30.2
+##  $ : num [1:4] -27.7 -24 -25.5 -23.5
+##  $ : num [1:4] -35.9 -30.7 -32.9 -30.2
 ##  $ : num [1:4] -22.8 -15.5 -21.9 -15.8
 ##  $ : num [1:4] -16.2 -14.3 -18 -15.4
 ##  $ : num [1:4] -31.6 -28.8 -32.1 -29.1
@@ -621,10 +622,10 @@ cat(&quot;LPD scores&quot;,
     &quot;\n&quot;,paste(paste(&quot;M&quot;,1:4,sep=&quot;&quot;),&quot;: &quot;,round(lpd.scores,2),&quot;\n&quot;,sep=&quot;&quot;),
     &quot;Winning model&quot;,&quot;=&quot;,paste(&quot;M&quot;,which(lpd.scores==max(lpd.scores)),sep=&quot;&quot;))</code></pre>
 <pre><code>## LPD scores 
-##  M1: -276.23
-##  M2: -239.13
-##  M3: -263.4
-##  M4: -239.35
+##  M1: -276.26
+##  M2: -239.07
+##  M3: -263.36
+##  M4: -239.37
 ##  Winning model = M2</code></pre>
 </div>
 </div>
@@ -635,7 +636,10 @@ cat(&quot;LPD scores&quot;,
 <p>Dorazio, Robert M, and Daniel Taylor Rodriguez. 2012. “A Gibbs sampler for Bayesian analysis of site-occupancy data.” <em>Methods in Ecology and Evolution</em> 3 (6): 1093–8. doi:<a href="https://doi.org/10.1111/j.2041-210X.2012.00237.x">10.1111/j.2041-210X.2012.00237.x</a>.</p>
 </div>
 <div id="ref-Hooten2015">
-<p>Hooten, M. B., and N. T. Hobbs. 2015. “A guide to Bayesian model selection for ecologists.” <em>Ecological Monographs</em> 85 (1): 3–28. doi:<a href="https://doi.org/10.1890/14-0661.1">10.1890/14-0661.1</a>.</p>
+<p>Hooten, M. B., and N. T. Hobbs. 2015a. “A guide to Bayesian model selection for ecologists.” <em>Ecological Monographs</em> 85 (1): 3–28. doi:<a href="https://doi.org/10.1890/14-0661.1">10.1890/14-0661.1</a>.</p>
+</div>
+<div id="ref-HootenSupp">
+<p>———. 2015b. “Data and code for implementing model selection approaches for occupancy model.” <em>Ecological Archives</em>, no. M085-001-S1. doi:<a href="https://doi.org/10.1890/14-0661.1">10.1890/14-0661.1</a>.</p>
 </div>
 <div id="ref-Royle2008">
 <p>Royle, J Andrew, and Robert M Dorazio. 2008. <em>Hierarchical Modeling and Inference in Ecology: The Analysis of Data from Populations, Metapopulations and Communities</em>. Elsevier.</p>
