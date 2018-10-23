@@ -159,7 +159,7 @@ for (i in 1:n){
   val1[i] = ifelse(runif(1)&gt;0.5,1,0)
 }
 toc() # Stops the timer</code></pre>
-<pre><code>## for_loop: 4.899 sec elapsed</code></pre>
+<pre><code>## for_loop: 4.74 sec elapsed</code></pre>
 <pre class="r"><code># For loop - preallocate memory
 tic(&quot;for_loop-preallocate&quot;)
 set.seed(1)
@@ -168,13 +168,13 @@ for (i in 1:n){
   val1[i] = ifelse(runif(1)&gt;0.5,1,0)
 }
 toc()</code></pre>
-<pre><code>## for_loop-preallocate: 4.727 sec elapsed</code></pre>
+<pre><code>## for_loop-preallocate: 4.202 sec elapsed</code></pre>
 <pre class="r"><code># Vectorized operation
 tic(&quot;vectorized&quot;)
 set.seed(1)
 val2 = ifelse(runif(n)&gt;0.5,1,0)
 toc()</code></pre>
-<pre><code>## vectorized: 0.215 sec elapsed</code></pre>
+<pre><code>## vectorized: 0.206 sec elapsed</code></pre>
 <pre class="r"><code>all(val1==val2) # check the results (thanks set.seed)</code></pre>
 <pre><code>## [1] TRUE</code></pre>
 </div>
@@ -196,22 +196,22 @@ for (i in 1:n){
   d1[i] = mean(X[i,])
 }
 toc()</code></pre>
-<pre><code>## for_loop: 0.425 sec elapsed</code></pre>
+<pre><code>## for_loop: 0.408 sec elapsed</code></pre>
 <pre class="r"><code># Apply
 tic(&quot;apply&quot;)
 d2 = apply(X,1,mean)
 toc()</code></pre>
-<pre><code>## apply: 0.524 sec elapsed</code></pre>
+<pre><code>## apply: 0.511 sec elapsed</code></pre>
 <pre class="r"><code># Rowmeans function (for loop in C)
 tic(&quot;rowmeans&quot;)
 d3 = rowMeans(X)
 toc()</code></pre>
-<pre><code>## rowmeans: 0.008 sec elapsed</code></pre>
+<pre><code>## rowmeans: 0.026 sec elapsed</code></pre>
 <pre class="r"><code># Vectorized
 tic(&quot;vectorized&quot;)
 d4 = X%*%rep(1/p,p)
 toc()</code></pre>
-<pre><code>## vectorized: 0.005 sec elapsed</code></pre>
+<pre><code>## vectorized: 0.007 sec elapsed</code></pre>
 <div id="use-benchmark-function" class="section level4">
 <h4>Use <code>benchmark</code> function</h4>
 <p>The <code>benchmark</code> function allows us to compare the amount of time it takes to complete a task using alternative approaches. The time it takes to complete a task in R can vary, so benchmark runs each process for a user-specified number of replicates and ranks the processes from longest to shortest. Let’s compare calculating row means using C versus a vectorized operation in R.</p>
@@ -226,8 +226,8 @@ benchmark(&quot;rowMeans&quot;={d3=rowMeans(X)},
 columns = c(&quot;test&quot;, &quot;replications&quot;, &quot;elapsed&quot;,
             &quot;relative&quot;, &quot;user.self&quot;, &quot;sys.self&quot;))</code></pre>
 <pre><code>##         test replications elapsed relative user.self sys.self
-## 1   rowMeans         1000   3.709    1.137     3.099    0.574
-## 2 vectorized         1000   3.263    1.000     2.539    0.699</code></pre>
+## 1   rowMeans         1000   3.454    1.172     3.023    0.414
+## 2 vectorized         1000   2.946    1.000     2.465    0.470</code></pre>
 </div>
 <div id="data-processing-example" class="section level4">
 <h4>Data processing example</h4>
@@ -253,13 +253,13 @@ for (i in 1:length(tree.idx)){
   age1[tree.rows] = tree.yrs - min(tree.yrs) + 1
 }
 toc()</code></pre>
-<pre><code>## for_loop: 0.259 sec elapsed</code></pre>
+<pre><code>## for_loop: 0.247 sec elapsed</code></pre>
 <pre class="r"><code>tic(&quot;apply&quot;)
 age2 = tree.growth$Year -
   rep(tapply(tree.growth$Year,tree.growth$Tree,min),
       tapply(tree.growth$Tree,tree.growth$Tree,length)) + 1
 toc()</code></pre>
-<pre><code>## apply: 0.011 sec elapsed</code></pre>
+<pre><code>## apply: 0.01 sec elapsed</code></pre>
 <pre class="r"><code>all(age1==age2) # check results</code></pre>
 <pre><code>## [1] TRUE</code></pre>
 </div>
@@ -275,13 +275,13 @@ for (i in 1:length(tree.idx)){
   mod1[[i]] = lm(inc~age,data=tree.growth[tree.growth$Tree==tree.idx[i],])
 }
 toc()</code></pre>
-<pre><code>## for_loop: 1.61 sec elapsed</code></pre>
+<pre><code>## for_loop: 1.563 sec elapsed</code></pre>
 <pre class="r"><code>tic(&quot;lapply&quot;)
 mod2 = lapply(tree.idx,function(x){
   lm(inc~age,data=tree.growth[tree.growth$Tree==x,])
 })
 toc()</code></pre>
-<pre><code>## lapply: 1.765 sec elapsed</code></pre>
+<pre><code>## lapply: 1.428 sec elapsed</code></pre>
 <p>The for loop and the <code>lapply</code> calls take nearly the same time to run. This is not surprising as they are nearly identical and both rely on for loops written in R. But, we can parallelize the <code>lapply</code> call and fit the model using multiple cores. Here, we will use the <code>parLapply</code> function from the <code>snow</code> library.</p>
 <pre class="r"><code># Determine your number of cores
 my.cores = detectCores() - 1
@@ -298,7 +298,7 @@ mod3 = parLapply(cl,tree.idx,function(x){
   lm(inc~age,data=tree.growth[tree.growth$Tree==x,])
 })
 toc()</code></pre>
-<pre><code>## parallel-apply: 0.953 sec elapsed</code></pre>
+<pre><code>## parallel-apply: 0.885 sec elapsed</code></pre>
 <pre class="r"><code>stopCluster(cl)</code></pre>
 </div>
 <div id="applied-analysis-modeling-willow-tit-occurrence" class="section level2">
@@ -400,7 +400,7 @@ for (i in 1:n.sim){
 }
 elev.df[,c(&quot;lwr&quot;,&quot;upr&quot;)] = t(apply(pred.vals,2,function(x)quantile(x,c(0.025,0.975))))
 toc()</code></pre>
-<pre><code>## sequential-bootstrap: 21.59 sec elapsed</code></pre>
+<pre><code>## sequential-bootstrap: 21.381 sec elapsed</code></pre>
 <pre class="r"><code># In parallel - use snow::clusterApplyLB
 tic(&quot;parallel-bootstrap&quot;)
 set.seed(seed)
@@ -415,7 +415,7 @@ par.pred.vals = do.call(&quot;rbind&quot;,clusterApplyLB(cl,1:n.sim,boot.ci)) # 
 stopCluster(cl)
 elev.df[,c(&quot;lwr2&quot;,&quot;upr2&quot;)] = t(apply(par.pred.vals,2,function(x)quantile(x,c(0.025,0.975))))
 toc()</code></pre>
-<pre><code>## parallel-bootstrap: 23.623 sec elapsed</code></pre>
+<pre><code>## parallel-bootstrap: 18.328 sec elapsed</code></pre>
 <pre class="r"><code># Add confidence interval to plot
 plot(wt$elev,wt$prop,xlab=&quot;Elevation (m)&quot;,ylab=&quot;Pr(Occurrence)&quot;,axes=F); axis(1); axis(2)
 lines(elev.df$elev,elev.df$pred.mean,lwd=3)
@@ -476,7 +476,7 @@ run.occ.mod = function(i){
 # Setup parallel run
 n.chains = 3
 thin = 15
-sfInit(parallel=T,cpus=n.chains,slaveOutfile=&quot;~/Documents/ParallelR/MotivatingExample/track-mcmc.txt&quot;)
+sfInit(parallel=T,cpus=n.chains,slaveOutfile=&quot;track-mcmc.txt&quot;)
 sfLibrary(coda) # load coda library on each node
 sfExport(&quot;wt&quot;,&quot;resp&quot;,&quot;n.mcmc&quot;,&quot;thin&quot;,&quot;elev.df&quot;,&quot;OccModMCMC&quot;)
 sfClusterSetupRNG() # set random seed---this ensures each node starts at a different random seed
@@ -595,7 +595,7 @@ cv.fcn &lt;- function(k){
 n.mcmc=50000
 
 # Run CV in parallel
-sfInit(parallel=T,cpus=4,slaveOutfile=&quot;~/Documents/ParallelR/MotivatingExample/track-cv.txt&quot;)
+sfInit(parallel=T,cpus=my.cores,slaveOutfile=&quot;track-cv.txt&quot;)
 sfExport(&quot;fold.idx.mat&quot;,&quot;wt&quot;,&quot;resp&quot;,&quot;n.mcmc&quot;,&quot;OccModMCMC&quot;)
 sfClusterSetupRNG()</code></pre>
 <pre><code>## [1] &quot;RNGstream&quot;</code></pre>
@@ -608,13 +608,13 @@ str(cv.score.list)</code></pre>
 ##  $ : num [1:4] -19.5 -17.2 -17 -17.1
 ##  $ : num [1:4] -34.5 -30.7 -31.5 -30
 ##  $ : num [1:4] -34.8 -32 -33.1 -31.6
-##  $ : num [1:4] -27.8 -23.9 -26.1 -24.6
-##  $ : num [1:4] -27.7 -24 -25.5 -23.5
+##  $ : num [1:4] -27.8 -23.9 -26.1 -24.7
+##  $ : num [1:4] -27.6 -24 -25.5 -23.5
 ##  $ : num [1:4] -35.9 -30.7 -32.9 -30.2
 ##  $ : num [1:4] -22.8 -15.5 -21.9 -15.8
-##  $ : num [1:4] -16.2 -14.3 -18 -15.4
+##  $ : num [1:4] -16.2 -14.4 -18 -15.4
 ##  $ : num [1:4] -31.6 -28.8 -32.1 -29.1
-##  $ : num [1:4] -25.5 -22 -25.3 -21.9</code></pre>
+##  $ : num [1:4] -25.5 -22 -25.2 -21.9</code></pre>
 <pre class="r"><code># Calculate log-predictive density score for all models
 lpd.scores = apply(do.call(&quot;rbind&quot;,cv.score.list),2,sum)
 
@@ -622,10 +622,10 @@ cat(&quot;LPD scores&quot;,
     &quot;\n&quot;,paste(paste(&quot;M&quot;,1:4,sep=&quot;&quot;),&quot;: &quot;,round(lpd.scores,2),&quot;\n&quot;,sep=&quot;&quot;),
     &quot;Winning model&quot;,&quot;=&quot;,paste(&quot;M&quot;,which(lpd.scores==max(lpd.scores)),sep=&quot;&quot;))</code></pre>
 <pre><code>## LPD scores 
-##  M1: -276.26
-##  M2: -239.07
-##  M3: -263.36
-##  M4: -239.37
+##  M1: -276.21
+##  M2: -239.19
+##  M3: -263.4
+##  M4: -239.38
 ##  Winning model = M2</code></pre>
 </div>
 </div>

@@ -354,7 +354,7 @@ run.occ.mod = function(i){
 # Setup parallel run
 n.chains = 3
 thin = 15
-sfInit(parallel=T,cpus=n.chains,slaveOutfile="~/Documents/ParallelR/MotivatingExample/track-mcmc.txt")
+sfInit(parallel=T,cpus=n.chains,slaveOutfile="track-mcmc.txt")
 sfLibrary(coda) # load coda library on each node
 sfExport("wt","resp","n.mcmc","thin","elev.df","OccModMCMC")
 sfClusterSetupRNG() # set random seed---this ensures each node starts at a different random seed
@@ -402,7 +402,7 @@ run.occ.mod = function(i){
 # Setup parallel run
 n.chains = 3
 thin = 15
-sfInit(parallel=T,cpus=n.chains,slaveOutfile="~/Documents/ParallelR/MotivatingExample/track-mcmc.txt")
+sfInit(parallel=T,cpus=n.chains,slaveOutfile="track-mcmc.txt")
 sfLibrary(coda)
 sfExport("wt","resp","n.mcmc","thin","elev.df","OccModMCMC")
 sfClusterSetupRNG()
@@ -497,7 +497,7 @@ cv.fcn <- function(k){
 n.mcmc=50000
 
 # Run CV in parallel
-sfInit(parallel=T,cpus=4,slaveOutfile="~/Documents/ParallelR/MotivatingExample/track-cv.txt")
+sfInit(parallel=T,cpus=my.cores,slaveOutfile="track-cv.txt")
 sfExport("fold.idx.mat","wt","resp","n.mcmc","OccModMCMC")
 sfClusterSetupRNG()
 cv.score.list = sfClusterApplyLB(1:K,cv.fcn)
